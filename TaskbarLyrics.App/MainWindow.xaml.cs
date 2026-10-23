@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Interop;
 using Media = System.Windows.Media;
+using System.Windows.Media;
 using System.Windows.Threading;
 using Microsoft.Web.WebView2.Core;
 using Microsoft.Web.WebView2.Wpf;
@@ -30,8 +31,17 @@ public partial class MainWindow : Window, IDisposable
     private readonly Action _openSettings;
     private readonly Action _toggleTranslation;
     private readonly SystemAudioSpectrumService _audioSpectrumService = new();
+    private const double HorizontalFollowIntervalMilliseconds = 500;
+    private const double HorizontalFollowThreshold = 0.5;
+
     private readonly DispatcherTimer _timer;
     private readonly DispatcherTimer _spectrumTimer;
+    private readonly DispatcherTimer _horizontalFollowTimer;
+    private double _followedTargetLeft = double.NaN;
+    private double _slideFromLeft;
+    private double _slideToLeft;
+    private long _slideStartedAt;
+    private bool _isHorizontalSlideRunning;
     private readonly TaskbarPlacementService _taskbarPlacementService = new();
     private readonly EmbeddedTaskbarAnchor _embeddedTaskbarAnchor = new();
     private readonly SmartTopmostController _smartTopmostController;
@@ -154,6 +164,12 @@ public partial class MainWindow : Window, IDisposable
             Interval = TimeSpan.FromMilliseconds(33)
         };
         _spectrumTimer.Tick += OnSpectrumTimerTick;
+
+        _horizontalFollowTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(HorizontalFollowIntervalMilliseconds)
+        };
+        _horizontalFollowTimer.Tick += OnHorizontalFollowTick;
 
         Loaded += OnLoaded;
         SourceInitialized += OnSourceInitialized;
@@ -562,6 +578,7 @@ public partial class MainWindow : Window, IDisposable
         ApplySpectrumTuning(_spectrumTuningSettings);
         PushCurrentLyricsToWebView();
         _timer.Start();
+        _horizontalFollowTimer.Start();
         UpdateSpectrumCaptureState();
     }
 
@@ -585,6 +602,12 @@ public partial class MainWindow : Window, IDisposable
             {
                 _timer.Start();
             }
+
+            if (!_horizontalFollowTimer.IsEnabled)
+            {
+                _horizontalFollowTimer.Start();
+            }
+
             AnchorToTaskbar();
             AttachToTaskbarHost();
         }
@@ -595,6 +618,8 @@ public partial class MainWindow : Window, IDisposable
             {
                 _timer.Stop();
             }
+
+            _horizontalFollowTimer.Stop();
         }
 
         UpdateSpectrumCaptureState();
@@ -642,8 +667,11 @@ public partial class MainWindow : Window, IDisposable
         CloseSmtcTimelineMonitorWindow();
         _timer.Stop();
         _spectrumTimer.Stop();
+        _horizontalFollowTimer.Stop();
+        StopHorizontalSlide();
         _timer.Tick -= OnTimerTick;
         _spectrumTimer.Tick -= OnSpectrumTimerTick;
+        _horizontalFollowTimer.Tick -= OnHorizontalFollowTick;
         SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
         NativeWindowTheme.ThemeChanged -= OnCoverThemeChanged;
         Loaded -= OnLoaded;
@@ -1902,6 +1930,12 @@ public partial class MainWindow : Window, IDisposable
         // Visibility polling and deferred taskbar notifications must not restore placement
         // while the resize gesture owns the window's position.
         if (_currentSettings.UseFloatingWindow && _floatingControls?.IsAdjustingSize == true) return;
+
+        // 悬浮模式的重锚会直接落位，进行中的跟随滑动必须放弃；嵌入模式的滑动在
+        // EmbeddedTaskbarAnchor 内部与重锚同源（Position），不需要在这里打断。
+        StopHorizontalSlide();
+        _followedTargetLeft = double.NaN;
+
         var wasEmbedded = _embeddedTaskbarAnchor.IsAttached;
         if (!_currentSettings.UseFloatingWindow)
         {
@@ -1929,6 +1963,152 @@ public partial class MainWindow : Window, IDisposable
 
         if (_currentSettings.UseFloatingWindow && _floatingPlacement.TryRestore()) return;
         TaskbarPlacementService.Anchor(this, _currentSettings, PlacementDisplay);
+    }
+
+    private void OnHorizontalFollowTick(object? sender, EventArgs e)
+    {
+        // 嵌入模式的自动跟随（含过渡动画）由 EmbeddedTaskbarAnchor 的刷新循环负责；
+        // 这里只驱动悬浮模式：悬浮窗口没有占用空间快照可用，仍按低频轮询计算目标。
+        if (!IsVisible || !_currentSettings.UseFloatingWindow ||
+            _currentSettings.HorizontalAnchor != LyricsHorizontalAnchor.AutoFollowIcons)
+        {
+            _followedTargetLeft = double.NaN;
+            StopHorizontalSlide();
+            return;
+        }
+
+        if (!TryGetTargetHorizontalLeft(out var targetLeft))
+        {
+            _followedTargetLeft = double.NaN;
+            return;
+        }
+
+        // 用「目标是否变化」判断是否需要动，避免依赖 WPF 在原生移动后已不可靠的窗口坐标。
+        var previousTarget = _followedTargetLeft;
+        if (double.IsFinite(previousTarget) &&
+            Math.Abs(targetLeft - previousTarget) <= HorizontalFollowThreshold)
+        {
+            return;
+        }
+
+        _followedTargetLeft = targetLeft;
+        if (!double.IsFinite(previousTarget))
+        {
+            // 首次定位（或刚被重锚）直接落位，不做过渡。
+            ApplyHorizontalLeft(targetLeft);
+            return;
+        }
+
+        // 动画可能正被新目标打断：起点取「此刻实际所在的位置」而不是上一次的目标值，
+        // 否则窗口会先跳回旧目标再重新出发，视觉上是一次突兀的回弹。
+        BeginHorizontalSlide(GetCurrentSlideLeft(previousTarget), targetLeft);
+    }
+
+    /// <summary>
+    /// 取当前插值位置：动画进行中沿用同一缓动曲线推算，未动画时即为 <paramref name="settledLeft"/>。
+    /// 刻意不读窗口原生矩形——每 500ms 一次的跟随轮询不值得为它多做一次跨进程坐标查询。
+    /// </summary>
+    private double GetCurrentSlideLeft(double settledLeft)
+    {
+        if (!_isHorizontalSlideRunning)
+        {
+            return settledLeft;
+        }
+
+        var progress = Math.Clamp(
+            Stopwatch.GetElapsedTime(_slideStartedAt).TotalMilliseconds / HorizontalSlideEasing.DurationMilliseconds,
+            0,
+            1);
+        if (progress >= 1)
+        {
+            return _slideToLeft;
+        }
+
+        return _slideFromLeft + ((_slideToLeft - _slideFromLeft) * HorizontalSlideEasing.Evaluate(progress));
+    }
+
+    private bool TryGetTargetHorizontalLeft(out double left)
+    {
+        left = TaskbarPlacementService.CalculateHorizontalLeft(this, _currentSettings, _displayMonitor);
+        return true;
+    }
+
+    private void BeginHorizontalSlide(double fromLeft, double toLeft)
+    {
+        _slideFromLeft = fromLeft;
+        _slideToLeft = toLeft;
+        _slideStartedAt = Stopwatch.GetTimestamp();
+        ApplyHorizontalLeft(fromLeft);
+
+        if (!_isHorizontalSlideRunning)
+        {
+            _isHorizontalSlideRunning = true;
+            // CompositionTarget.Rendering 由渲染管线驱动，每显示帧触发一次并与垂直同步对齐，
+            // 因此不会像固定间隔定时器那样丢帧或补帧。
+            CompositionTarget.Rendering += OnHorizontalSlideFrame;
+
+            // 歌词窗口静止时内容不变，WPF 可能整帧跳过渲染而不触发 Rendering；
+            // 让本窗口持续产生脏区，保证动画期间每帧都有回调，动画结束立即撤销。
+            InvalidateVisual();
+            CompositionTarget.Rendering += OnHorizontalSlideKeepAlive;
+        }
+    }
+
+    /// <summary>
+    /// 与 <see cref="OnHorizontalSlideFrame"/> 同帧执行，只负责把窗口标记为需要重绘，
+    /// 从而维持下一帧的渲染事件。开销是一次空的脏区标记，不涉及布局或绘制。
+    /// </summary>
+    private void OnHorizontalSlideKeepAlive(object? sender, EventArgs e) => InvalidateVisual();
+
+    /// <summary>
+    /// 嵌入模式的滑动在 <see cref="EmbeddedTaskbarAnchor"/> 内逐帧推进；它的窗口与本窗口分离，
+    /// 由动画帧回调这里维持渲染节拍，机制与 <see cref="OnHorizontalSlideKeepAlive"/> 相同。
+    /// </summary>
+    internal void SustainRenderLoop() => InvalidateVisual();
+
+    private void OnHorizontalSlideFrame(object? sender, EventArgs e)
+    {
+        var progress = Math.Clamp(
+            Stopwatch.GetElapsedTime(_slideStartedAt).TotalMilliseconds / HorizontalSlideEasing.DurationMilliseconds,
+            0,
+            1);
+
+        if (progress >= 1)
+        {
+            FinishHorizontalSlide();
+            return;
+        }
+
+        var eased = HorizontalSlideEasing.Evaluate(progress);
+        ApplyHorizontalLeft(_slideFromLeft + ((_slideToLeft - _slideFromLeft) * eased));
+    }
+
+    private void FinishHorizontalSlide()
+    {
+        ApplyHorizontalLeft(_slideToLeft);
+        StopHorizontalSlide();
+    }
+
+    private void StopHorizontalSlide()
+    {
+        if (_isHorizontalSlideRunning)
+        {
+            CompositionTarget.Rendering -= OnHorizontalSlideFrame;
+            CompositionTarget.Rendering -= OnHorizontalSlideKeepAlive;
+            _isHorizontalSlideRunning = false;
+        }
+    }
+
+    /// <summary>
+    /// 提交悬浮窗口的水平位置（屏幕逻辑坐标）。
+    /// </summary>
+    /// <remarks>
+    /// 只发一次原生移动：给 Window.Left 赋值会让 WPF 再发一次 SetWindowPos，
+    /// 每帧两遍既浪费又会和目标位置打架。
+    /// </remarks>
+    private void ApplyHorizontalLeft(double left)
+    {
+        TaskbarPlacementService.MoveNativeWindow(this, left, Top, GetTargetPixelsPerDip());
     }
 
     private void DetachAndRequestRecreation()
@@ -2056,7 +2236,15 @@ public partial class MainWindow : Window, IDisposable
             Show();
         }
 
-        AnchorToTaskbar();
+        // 悬浮模式 + 自动跟随：水平位置由跟随轮询负责（它带滑动过渡），每 60ms 的重锚
+        // 会把窗口直接拉到终点，动画的中间帧就永远看不到。嵌入模式的滑动在
+        // EmbeddedTaskbarAnchor 内部与重锚同源，不需要跳过；任务栏重建等场景仍由 WndProc 重锚。
+        if (!(_currentSettings.UseFloatingWindow &&
+                _currentSettings.HorizontalAnchor == LyricsHorizontalAnchor.AutoFollowIcons))
+        {
+            AnchorToTaskbar();
+        }
+
         AttachToTaskbarHost();
     }
 

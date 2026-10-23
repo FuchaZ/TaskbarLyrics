@@ -505,6 +505,12 @@ internal static class TaskbarEmbeddingLayoutPolicy
         {
             LyricsHorizontalAnchor.Left => new OffsetRange(0, remaining),
             LyricsHorizontalAnchor.Center => new OffsetRange(-remaining / 2, remaining / 2),
+
+            // 自动跟随的位置由图标区决定并会被夹在任务栏范围内，X 偏移只是微调，
+            // 因此这里不限制“偏移是否越界”，与设置页滑块的可用范围保持一致。
+            LyricsHorizontalAnchor.AutoFollowIcons => new OffsetRange(
+                AppSettings.MinimumWindowOffset,
+                AppSettings.MaximumWindowOffset),
             _ => new OffsetRange(-remaining, 0)
         };
     }

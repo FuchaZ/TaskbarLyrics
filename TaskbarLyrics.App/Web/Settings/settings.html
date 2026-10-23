@@ -295,6 +295,14 @@
                 <div class="setting-row monitor-setting-row"><div class="setting-label"><strong>显示器</strong><small>选择显示歌词的屏幕，适用于两种模式。</small></div><div class="monitor-selection"><div class="monitor-mode" role="radiogroup" aria-label="歌词显示器模式"><label><input type="radio" name="lyricsDisplayMode" value="All" data-display-mode=""><span>全部显示器</span></label><label><input type="radio" name="lyricsDisplayMode" value="Selected" data-display-mode=""><span>指定显示器</span></label></div><span id="displayMonitorListLabel" class="sr-only">选择显示歌词的显示器</span><div id="displayMonitorList" class="monitor-list" role="group" aria-labelledby="displayMonitorListLabel"></div><small id="displayMonitorHint" class="monitor-hint" role="status"></small></div></div>
               </div>
             </section>
+<section class="panel">
+              <div class="panel-head"><div><h2>窗口位置</h2><p>调整任务栏嵌入模式的锚点与偏移。</p></div></div>
+              <div class="settings">
+                <div class="setting-row compact"><div class="setting-label"><strong id="horizontalAnchorLabel">水平锚点</strong><small>决定歌词依附在任务栏的区域；“自动跟随图标”会检测任务栏左侧图标组并紧贴其右侧，同时避开系统托盘，图标增减时带过渡动画滑动。</small></div><div class="monitor-mode layout-options" role="radiogroup" aria-labelledby="horizontalAnchorLabel"><label><input type="radio" name="horizontalAnchor" value="Left" data-setting="horizontalAnchor" aria-label="水平锚点左侧"><span>左侧</span></label><label><input type="radio" name="horizontalAnchor" value="Center" data-setting="horizontalAnchor" aria-label="水平锚点居中"><span>居中</span></label><label><input type="radio" name="horizontalAnchor" value="Right" data-setting="horizontalAnchor" aria-label="水平锚点右侧"><span>右侧</span></label><label><input type="radio" name="horizontalAnchor" value="AutoFollowIcons" data-setting="horizontalAnchor" aria-label="水平锚点自动跟随图标"><span>自动跟随图标</span></label></div></div>
+                <div class="setting-row"><div class="setting-label"><strong>X 偏移</strong><small>相对水平锚点微调窗口位置，范围 -2000～2000 px。</small></div><div class="slider-number-control"><input type="range" min="-2000" max="2000" step="1" data-setting="xOffset" aria-label="X 偏移滑块"><label class="unit-input compact-number-input pixel-input"><input type="number" min="-2000" max="2000" step="1" inputmode="numeric" data-setting="xOffset" aria-label="X 偏移数值"><span>px</span></label></div></div>
+                <div class="setting-row"><div class="setting-label"><strong>Y 偏移</strong><small>相对任务栏垂直微调窗口位置，范围 -2000～2000 px。</small></div><div class="slider-number-control"><input type="range" min="-2000" max="2000" step="1" data-setting="yOffset" aria-label="Y 偏移滑块"><label class="unit-input compact-number-input pixel-input"><input type="number" min="-2000" max="2000" step="1" inputmode="numeric" data-setting="yOffset" aria-label="Y 偏移数值"><span>px</span></label></div></div>
+              </div>
+            </section>
   </div>
 </section>
 

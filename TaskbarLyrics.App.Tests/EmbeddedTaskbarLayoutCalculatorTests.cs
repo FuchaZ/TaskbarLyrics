@@ -180,4 +180,72 @@ public sealed class EmbeddedTaskbarLayoutCalculatorTests
                 parentIsValid));
     }
 
+    [Theory]
+    [InlineData(0, 148)]
+    [InlineData(20, 168)]
+    public void CalculateHorizontalLeftAutoFollowSitsAfterIconGroup(double offset, double expected)
+    {
+        var anchors = new TaskbarHorizontalAnchors(140, null);
+
+        var result = EmbeddedTaskbarLayoutCalculator.CalculateHorizontalLeft(
+            1920,
+            420,
+            LyricsHorizontalAnchor.AutoFollowIcons,
+            offset,
+            anchors);
+
+        Assert.Equal(expected, result, 10);
+    }
+
+    [Fact]
+    public void CalculateHorizontalLeftAutoFollowStopsBeforeTray()
+    {
+        var anchors = new TaskbarHorizontalAnchors(1500, 1600);
+
+        var result = EmbeddedTaskbarLayoutCalculator.CalculateHorizontalLeft(
+            1920,
+            420,
+            LyricsHorizontalAnchor.AutoFollowIcons,
+            0,
+            anchors);
+
+        Assert.Equal(1600 - 420 - EmbeddedTaskbarLayoutCalculator.IconGap, result, 10);
+    }
+
+    [Fact]
+    public void CalculateHorizontalLeftAutoFollowFallsBackToLeftAnchorWhenBoundariesAreUnknown()
+    {
+        Assert.Equal(
+            0,
+            EmbeddedTaskbarLayoutCalculator.CalculateHorizontalLeft(
+                1920,
+                420,
+                LyricsHorizontalAnchor.AutoFollowIcons,
+                0,
+                TaskbarHorizontalAnchors.Unavailable));
+        Assert.Equal(
+            30,
+            EmbeddedTaskbarLayoutCalculator.CalculateHorizontalLeft(
+                1920,
+                420,
+                LyricsHorizontalAnchor.AutoFollowIcons,
+                30,
+                TaskbarHorizontalAnchors.Unavailable));
+    }
+
+    [Fact]
+    public void CalculateHorizontalLeftAutoFollowClampsWindowInsideTaskbar()
+    {
+        var anchors = new TaskbarHorizontalAnchors(3000, null);
+
+        Assert.Equal(
+            1920 - 420,
+            EmbeddedTaskbarLayoutCalculator.CalculateHorizontalLeft(
+                1920,
+                420,
+                LyricsHorizontalAnchor.AutoFollowIcons,
+                0,
+                anchors));
+    }
+
 }

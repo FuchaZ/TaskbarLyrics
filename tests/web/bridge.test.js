@@ -2587,7 +2587,8 @@ describe("settings WebView bridge", () => {
     const document = dom.window.document;
     const sliders = Array.from(document.querySelectorAll('input[type="range"][data-setting]'));
 
-    expect(sliders.length).toBe(13);
+    // 上游 v1.7.5 移除了 X/Y 偏移滑块（剩 13 个）；本分支加回「窗口位置」面板后是 15 个。
+    expect(sliders.length).toBe(15);
     sliders.forEach(slider => {
       const control = slider.closest(".slider-number-control");
       expect(control).not.toBeNull();
@@ -2968,13 +2969,18 @@ describe("settings WebView bridge", () => {
     key(alignmentLeft, "End");
     expect(sent.at(-1).payload).toEqual({ key: "lyricsTextAlignment", value: "Right" });
     expect(coverLeft.checked).toBe(true);
-    expect(document.querySelector('[data-setting="horizontalAnchor"]')).toBeNull();
-    expect(sent.filter(message => message.payload?.key === "horizontalAnchor")).toHaveLength(0);
+    const anchorCenter = document.querySelector('input[data-setting="horizontalAnchor"][value="Center"]');
+    expect(anchorCenter.checked).toBe(true);
+    expect(document.querySelector('.select-trigger[data-setting="horizontalAnchor"]')).toBeNull();
+    document.querySelector('input[data-setting="horizontalAnchor"][value="Left"]').closest("label").click();
+    expect(sent.at(-1).payload).toEqual({ key: "horizontalAnchor", value: "Left" });
+    key(document.querySelector('input[data-setting="horizontalAnchor"][value="Left"]'), "End");
+    expect(sent.at(-1).payload).toEqual({ key: "horizontalAnchor", value: "AutoFollowIcons" });
     expect(coverLeft.checked).toBe(true);
     expect(document.querySelector('input[data-setting="lyricsTextAlignment"][value="Right"]').checked).toBe(true);
     const finalCount = sent.length;
     dom.window.settingsApp.receive({ version: 1, type: "settingsState", payload: { settings: { showCover: true, coverPosition: "Left", lyricsTextAlignment: "Right", horizontalAnchor: "Center" }, fonts: [] } });
-    expect(document.querySelector('[data-setting="horizontalAnchor"]')).toBeNull();
+    expect(document.querySelector('input[data-setting="horizontalAnchor"][value="Center"]').checked).toBe(true);
     expect(sent).toHaveLength(finalCount);
   });
 

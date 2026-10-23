@@ -21,9 +21,7 @@ internal sealed class TaskbarPlacementService
     public static void Anchor(Window window, AppSettings settings, DisplayMonitor? targetDisplay = null)
     {
         var pixelsPerDip = targetDisplay?.PixelsPerDip ?? GetPixelsPerDip(window);
-        var display = targetDisplay is null
-            ? GetPrimaryDisplayMetrics(pixelsPerDip)
-            : ConvertPhysicalDisplayMetrics(targetDisplay.Bounds, targetDisplay.WorkArea, pixelsPerDip);
+        var display = ResolveDisplayMetrics(pixelsPerDip, targetDisplay);
         var taskbar = ResolveTaskbarBounds(display);
         var metrics = LyricsLayoutMetrics.Create(settings, pixelsPerDip, taskbar);
         window.Height = Math.Min(metrics.DesiredWindowHeight, display.Height);
@@ -39,12 +37,12 @@ internal sealed class TaskbarPlacementService
             return;
         }
 
-        var requestedLeft = settings.UseFloatingWindow ? display.Left : settings.HorizontalAnchor switch
-        {
-            LyricsHorizontalAnchor.Left => display.Left + settings.XOffset,
-            LyricsHorizontalAnchor.Center => display.Left + ((display.Width - window.Width) / 2.0) + settings.XOffset,
-            _ => display.Right - window.Width - 230 + settings.XOffset
-        };
+        // 悬浮窗沿用上游「固定靠左」的摆放；自动跟随是例外：它的目标位置由图标区决定，
+        // 首次落位就直接跟到图标右缘，否则要等跟随轮询再跳一次。
+        var requestedLeft = settings.UseFloatingWindow &&
+                settings.HorizontalAnchor != LyricsHorizontalAnchor.AutoFollowIcons
+            ? display.Left
+            : CalculateHorizontalLeft(settings, display, window.Width, pixelsPerDip, targetDisplay);
         var maximumLeft = Math.Max(display.Left, display.Right - window.Width);
         window.Left = Math.Clamp(requestedLeft, display.Left, maximumLeft);
 
@@ -56,6 +54,75 @@ internal sealed class TaskbarPlacementService
 
         CommitNativeBounds(window, pixelsPerDip);
     }
+
+    /// <summary>
+    /// 悬浮窗口目标左缘（屏幕逻辑像素）。只有 <see cref="LyricsHorizontalAnchor.AutoFollowIcons"/>
+    /// 需要任务栏图标区边界，其余锚点不会触发探测。
+    /// </summary>
+    internal static double CalculateHorizontalLeft(
+        AppSettings settings,
+        TaskbarDisplayMetrics display,
+        double windowWidth,
+        double pixelsPerDip,
+        DisplayMonitor? targetDisplay)
+    {
+        return settings.HorizontalAnchor switch
+        {
+            LyricsHorizontalAnchor.Left => display.Left + settings.XOffset,
+            LyricsHorizontalAnchor.Center => display.Left + ((display.Width - windowWidth) / 2.0) + settings.XOffset,
+            LyricsHorizontalAnchor.AutoFollowIcons => CalculateAutoFollowLeft(
+                settings,
+                display,
+                windowWidth,
+                pixelsPerDip,
+                targetDisplay),
+            _ => display.Right - windowWidth - 230 + settings.XOffset
+        };
+    }
+
+    /// <summary>
+    /// 悬浮窗口的自动跟随位置：贴目标显示器任务栏的图标组右缘并避让托盘，
+    /// 容器跨度就是目标显示器的横向范围；探测不到图标边界时退回左侧锚点行为。
+    /// </summary>
+    private static double CalculateAutoFollowLeft(
+        AppSettings settings,
+        TaskbarDisplayMetrics display,
+        double windowWidth,
+        double pixelsPerDip,
+        DisplayMonitor? targetDisplay)
+    {
+        var anchors = ResolveHorizontalAnchors(pixelsPerDip, targetDisplay);
+        return EmbeddedTaskbarLayoutCalculator.CalculateAutoFollowLeft(
+            display.Left,
+            display.Right,
+            windowWidth,
+            settings.XOffset,
+            anchors);
+    }
+
+    /// <summary>
+    /// 悬浮模式窗口中窗口的目标左缘（屏幕逻辑像素），用于位置复检，不移动窗口。
+    /// </summary>
+    internal static double CalculateHorizontalLeft(
+        Window window,
+        AppSettings settings,
+        DisplayMonitor? targetDisplay)
+    {
+        var pixelsPerDip = targetDisplay?.PixelsPerDip ?? GetPixelsPerDip(window);
+        var display = ResolveDisplayMetrics(pixelsPerDip, targetDisplay);
+        return CalculateHorizontalLeft(settings, display, window.Width, pixelsPerDip, targetDisplay);
+    }
+
+    private static TaskbarHorizontalAnchors ResolveHorizontalAnchors(double pixelsPerDip, DisplayMonitor? targetDisplay)
+    {
+        var taskbarHandle = TaskbarWindowLocator.FindTaskbar(targetDisplay, out _);
+        return TaskbarIconRegionProbe.GetRegion(taskbarHandle).ToLogical(pixelsPerDip, 0);
+    }
+
+    private static TaskbarDisplayMetrics ResolveDisplayMetrics(double pixelsPerDip, DisplayMonitor? targetDisplay) =>
+        targetDisplay is null
+            ? GetPrimaryDisplayMetrics(pixelsPerDip)
+            : ConvertPhysicalDisplayMetrics(targetDisplay.Bounds, targetDisplay.WorkArea, pixelsPerDip);
 
     internal static double GetPixelsPerDip(Window window)
     {
@@ -105,7 +172,37 @@ internal sealed class TaskbarPlacementService
             workArea.Height);
     }
 
-    private static void CommitNativeBounds(Window window, double pixelsPerDip)
+    /// <summary>
+    /// 只把悬浮窗口移动到新位置，不改动尺寸。
+    /// </summary>
+    /// <remarks>
+    /// 逐帧动画只应改变位置：连尺寸一起提交会让 WPF 重新 measure/arrange，
+    /// 并触发 WebView2 重排，那是滑动卡顿的主要来源之一。
+    /// <c>SWP_ASYNCWINDOWPOS</c> 让调用方立即返回，不等待目标窗口的消息循环。
+    /// </remarks>
+    internal static void MoveNativeWindow(Window window, double left, double top, double pixelsPerDip)
+    {
+        var hwnd = new WindowInteropHelper(window).Handle;
+        if (hwnd == IntPtr.Zero)
+        {
+            return;
+        }
+
+        pixelsPerDip = double.IsFinite(pixelsPerDip) && pixelsPerDip > 0 ? pixelsPerDip : 1;
+        _ = TaskbarNativeMethods.SetWindowPos(
+            hwnd,
+            IntPtr.Zero,
+            AlignPhysicalPixel(left, pixelsPerDip),
+            AlignPhysicalPixel(top, pixelsPerDip),
+            0,
+            0,
+            TaskbarNativeMethods.SWP_NOSIZE |
+            TaskbarNativeMethods.SWP_NOZORDER |
+            TaskbarNativeMethods.SWP_NOACTIVATE |
+            TaskbarNativeMethods.SWP_ASYNCWINDOWPOS);
+    }
+
+    internal static void CommitNativeBounds(Window window, double pixelsPerDip)
     {
         var hwnd = new WindowInteropHelper(window).Handle;
         if (hwnd == IntPtr.Zero)
@@ -442,4 +539,21 @@ internal static class TaskbarNativeMethods
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
     internal static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo monitorInfo);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern IntPtr FindWindow(string? className, string? windowName);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern IntPtr FindWindowEx(
+        IntPtr parent,
+        IntPtr childAfter,
+        string? className,
+        string? windowName);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetWindowRect(IntPtr hwnd, out NativeRect rect);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    internal static extern int GetClassName(IntPtr hwnd, char[] className, int maxCount);
 }
