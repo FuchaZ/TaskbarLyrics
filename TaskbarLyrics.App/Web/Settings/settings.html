@@ -300,6 +300,17 @@
                 <div class="setting-row monitor-setting-row"><div class="setting-label"><strong>{{UI_Displays}}</strong><small>{{UI_ChooseScreensForLyricsInBothModes}}</small></div><div class="monitor-selection"><div class="monitor-mode" role="radiogroup" aria-label="{{UI_LyricDisplaySelectionMode}}"><label><input type="radio" name="lyricsDisplayMode" value="All" data-display-mode=""><span>{{UI_AllDisplays}}</span></label><label><input type="radio" name="lyricsDisplayMode" value="Selected" data-display-mode=""><span>{{UI_SelectedDisplays}}</span></label></div><span id="displayMonitorListLabel" class="sr-only">{{UI_ChooseDisplaysForLyrics}}</span><div id="displayMonitorList" class="monitor-list" role="group" aria-labelledby="displayMonitorListLabel"></div><small id="displayMonitorHint" class="monitor-hint" role="status"></small></div></div>
               </div>
             </section>
+<section class="panel">
+              <div class="panel-head"><div><h2>{{UI_HorizontalAnchor}}</h2><p>{{UI_HorizontalAnchorDescription}}</p></div></div>
+              <div class="settings">
+                <div class="setting-row compact"><div class="setting-label"><strong id="horizontalAnchorLabel">{{UI_HorizontalAnchor}}</strong><small>{{UI_AutoFollowIconsDescription}}</small></div><div class="monitor-mode layout-options" role="radiogroup" aria-labelledby="horizontalAnchorLabel">
+                  <label><input type="radio" name="horizontalAnchor" value="Left" data-setting="horizontalAnchor" aria-label="{{UI_HorizontalAnchorLeftAria}}"><span>{{UI_HorizontalAnchorLeft}}</span></label>
+                  <label><input type="radio" name="horizontalAnchor" value="Center" data-setting="horizontalAnchor" aria-label="{{UI_HorizontalAnchorCenterAria}}"><span>{{UI_HorizontalAnchorCenter}}</span></label>
+                  <label><input type="radio" name="horizontalAnchor" value="Right" data-setting="horizontalAnchor" aria-label="{{UI_HorizontalAnchorRightAria}}"><span>{{UI_HorizontalAnchorRight}}</span></label>
+                  <label><input type="radio" name="horizontalAnchor" value="AutoFollowIcons" data-setting="horizontalAnchor" aria-label="{{UI_HorizontalAnchorAutoFollowAria}}"><span>{{UI_HorizontalAnchorAutoFollow}}</span></label>
+                </div></div>
+              </div>
+            </section>
   </div>
 </section>
 

@@ -6,7 +6,11 @@ public enum LyricsHorizontalAnchor
 {
     Left,
     Center,
-    Right
+    Right,
+
+    // 运行时探测任务栏左侧图标组与系统托盘的真实边界，贴图标右缘摆放；
+    // 图标增减、任务栏重建或切换到其他显示器时位置会重新计算。
+    AutoFollowIcons
 }
 
 public enum LyricsTextAlignment

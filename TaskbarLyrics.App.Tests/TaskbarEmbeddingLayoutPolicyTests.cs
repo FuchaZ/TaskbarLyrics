@@ -224,4 +224,41 @@ public sealed class TaskbarEmbeddingLayoutPolicyTests
         Assert.Equal(2, constraints.Displays.Count);
         Assert.True(TaskbarEmbeddingLayoutPolicy.CanFit(new AppSettings(), constraints));
     }
+
+    [Fact]
+    public void AutoFollowAnchorKeepsTheFullXOffsetRangeBecauseThePositionIsClamped()
+    {
+        var settings = new AppSettings
+        {
+            HorizontalAnchor = LyricsHorizontalAnchor.AutoFollowIcons,
+            WindowWidth = 420
+        };
+
+        var bounds = TaskbarEmbeddingLayoutPolicy.GetInputBounds(
+            settings,
+            new TaskbarEmbeddingConstraints(500, 48),
+            fallbackWidth: 420);
+
+        Assert.Equal(AppSettings.MinimumWindowOffset, bounds.MinXOffset);
+        Assert.Equal(AppSettings.MaximumWindowOffset, bounds.MaxXOffset);
+    }
+
+    [Fact]
+    public void ClampToConstraintsDoesNotResetAutoFollowOffsets()
+    {
+        var settings = new AppSettings
+        {
+            HorizontalAnchor = LyricsHorizontalAnchor.AutoFollowIcons,
+            WindowWidth = 420,
+            XOffset = 1000,
+            YOffset = 0
+        };
+
+        TaskbarEmbeddingLayoutPolicy.ClampToConstraints(
+            settings,
+            new TaskbarEmbeddingConstraints(500, 48));
+
+        Assert.Equal(1000, settings.XOffset);
+        Assert.Equal(0, settings.YOffset);
+    }
 }
